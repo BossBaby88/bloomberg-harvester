@@ -1,0 +1,41 @@
+name: Bloomberg Harvester Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: 'Année à aspirer (ex: 2014, 2015, 2018)'
+        required: true
+        default: '2014'
+
+jobs:
+  scrape-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 20 # 20 machines virtuelles lancées en même temps
+      matrix:
+        month: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        part: [1, 2] # Part 1 = jours 1-15, Part 2 = jours 16-31
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer Playwright et Firefox
+        run: |
+          npm install playwright
+          npx playwright install --with-deps firefox
+
+      - name: Lancer le runner (${{ github.event.inputs.year }} - Mois ${{ matrix.month }} Part ${{ matrix.part }})
+        run: node harvest_chunk.js ${{ github.event.inputs.year }} ${{ matrix.month }} ${{ matrix.part }}
+
+      - name: Sauvegarder les fichiers en Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: bbg_${{ github.event.inputs.year }}_m${{ matrix.month }}_p${{ matrix.part }}
+          path: output_${{ github.event.inputs.year }}_${{ matrix.month }}_part${{ matrix.part }}/*.json
