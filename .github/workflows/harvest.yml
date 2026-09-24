@@ -4,23 +4,26 @@ on:
   workflow_dispatch:
     inputs:
       year:
-        description: 'Année à aspirer'
+        description: 'Année'
         required: true
         default: '2014'
       month:
-        description: 'Mois (1 à 12, ou tapez "ALL" pour toute l année)'
+        description: 'Mois (ex: 2)'
         required: true
-        default: '2' # Par défaut : Février pour le test
+        default: '2'
+      test_mode:
+        description: 'Mode Test (10 articles en 1 min) ?'
+        type: boolean
+        default: true
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
     strategy:
-      max-parallel: 20
+      max-parallel: 2
       matrix:
-        part: [1, 2]
-        # Si on a mis "ALL", ça fait les 12 mois, sinon seulement le mois choisi
-        month: ${{ fromJson(github.event.inputs.month == 'ALL' && '[1,2,3,4,5,6,7,8,9,10,11,12]' || format('[{0}]', github.event.inputs.month)) }}
+        part: [1] # Pour le test rapide, 1 seul serveur suffit !
+        month: [2]
 
     steps:
       - name: Récupérer le code
@@ -36,11 +39,11 @@ jobs:
           npm install playwright
           npx playwright install --with-deps firefox
 
-      - name: Lancer l aspiration (${{ github.event.inputs.year }} - M${{ matrix.month }} P${{ matrix.part }})
-        run: node harvest_chunk.js ${{ github.event.inputs.year }} ${{ matrix.month }} ${{ matrix.part }}
+      - name: Lancer le test
+        run: node harvest_chunk.js ${{ github.event.inputs.year }} ${{ github.event.inputs.month }} ${{ matrix.part }} ${{ github.event.inputs.test_mode && 'TEST' || 'FULL' }}
 
-      - name: Sauvegarder les fichiers en Zip
+      - name: Créer le fichier ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: bbg_${{ github.event.inputs.year }}_m${{ matrix.month }}_p${{ matrix.part }}
-          path: output_${{ github.event.inputs.year }}_${{ matrix.month }}_part${{ matrix.part }}/*.json
+          name: test_articles_bloomberg
+          path: output_${{ github.event.inputs.year }}_${{ github.event.inputs.month }}_part${{ matrix.part }}/*.json
