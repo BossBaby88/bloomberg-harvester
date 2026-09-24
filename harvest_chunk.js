@@ -15,11 +15,7 @@ function cleanTicker(raw) {
 
 function slugify(text) {
     if (!text) return 'article';
-    return text.toString().toLowerCase().trim()
-        .replace(/[^\w\s-]/g, '')
-        .replace(/[\s_-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 60);
+    return text.toString().toLowerCase().trim().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '-').slice(0, 60);
 }
 
 function parseBloombergBody(node) {
@@ -44,7 +40,7 @@ async function run() {
     const monthKey = `${YEAR}-${parseInt(MONTH, 10)}`;
     const sitemapUrl = `https://www.bloomberg.com/sitemaps/news/${monthKey}.xml`;
 
-    console.log(`🚀 [Runner Cloud] Lancement : Année ${YEAR} | Mois ${MONTH} | Partie ${PART}`);
+    console.log(`\n🚀 [Runner Cloud] Démarrage : Année ${YEAR} | Mois ${MONTH} | Partie ${PART}`);
 
     const browser = await firefox.launch({ headless: true });
     const context = await browser.newContext({
@@ -52,7 +48,7 @@ async function run() {
     });
     const page = await context.newPage();
 
-    // Bloquer les scripts traceurs
+    // Bloquer les traceurs
     await page.route('**/*', route => {
         const u = route.request().url();
         if (u.includes('perimeterx') || u.includes('px-cloud') || u.includes('px.js') || u.includes('advertising') || u.includes('analytics')) return route.abort();
@@ -60,6 +56,7 @@ async function run() {
     });
 
     try {
+        console.log(`📥 Téléchargement du sitemap : ${sitemapUrl}...`);
         await page.goto(sitemapUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         const xml = await page.content();
         const urls = (xml.match(/<loc>(https?:\/\/[^\s<>]+)<\/loc>/gi) || []).map(u => u.replace(/<\/?loc>/g, '').trim());
@@ -73,7 +70,7 @@ async function run() {
             return PART === '1' ? (dayNum <= 15) : (dayNum > 15);
         });
 
-        console.log(`🎯 ${filteredUrls.length} dépêches assignées à cette machine.`);
+        console.log(`🎯 ${filteredUrls.length} dépêches assignées à ce runner.\n`);
 
         let saved = 0;
         for (let i = 0; i < filteredUrls.length; i++) {
@@ -81,7 +78,10 @@ async function run() {
             const slug = url.split('/').pop();
             const filePath = path.join(OUTPUT_DIR, `${slugify(slug)}.json`);
 
-            if (fs.existsSync(filePath)) continue;
+            if (fs.existsSync(filePath)) {
+                console.log(`   ⏭️  [${i + 1}/${filteredUrls.length}] Déjà fait : ${slug.slice(0, 35)}...`);
+                continue;
+            }
 
             try {
                 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -96,23 +96,25 @@ async function run() {
                         const parsed = parseBloombergBody(story.body);
                         if (parsed.text && parsed.text.length > 200) {
                             fs.writeFileSync(filePath, JSON.stringify({
-                                url,
-                                title: story.headline || story.title,
-                                summary: story.summary || "",
-                                publishedAt: story.publishedAt || monthKey,
-                                fullText: parsed.text,
-                                tickers: parsed.tickers
+                                url, title: story.headline || story.title,
+                                summary: story.summary || "", publishedAt: story.publishedAt || monthKey,
+                                fullText: parsed.text, tickers: parsed.tickers
                             }, null, 2));
                             saved++;
+                            console.log(`   ✅ [${i + 1}/${filteredUrls.length}] Sauvegardé (${Math.round(parsed.text.length / 1024)} KB) : ${slug.slice(0, 40)}...`);
+                        } else {
+                            console.log(`   ⚠️  [${i + 1}/${filteredUrls.length}] Format court : ${slug.slice(0, 40)}...`);
                         }
                     }
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.log(`   ❌ [${i + 1}/${filteredUrls.length}] Erreur : ${e.message.slice(0, 40)}`);
+            }
 
-            // Pause aléatoire 2s à 4s
+            // Pause aléatoire de sécurité (2 à 4 secondes)
             await new Promise(r => setTimeout(r, Math.floor(Math.random() * 2000 + 2000)));
         }
-        console.log(`✅ [Terminé] ${saved} articles sauvegardés pour ce lot.`);
+        console.log(`\n🎉 [Runner Terminé] Total de ${saved} articles sauvegardés pour ce lot.`);
     } catch (e) {
         console.error("Erreur générale :", e.message);
     }
