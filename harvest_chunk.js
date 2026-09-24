@@ -5,7 +5,6 @@ const path = require('path');
 const YEAR = process.argv[2] || '2014';
 const MONTH = process.argv[3] || '2';
 const PART = process.argv[4] || '1';
-// Si on passe "TEST", on ne prend que 10 articles pour tester en 1 minute !
 const TEST_MODE = process.argv[5] === 'TEST';
 
 const OUTPUT_DIR = path.resolve(__dirname, `./output_${YEAR}_${MONTH}_part${PART}`);
@@ -42,14 +41,16 @@ async function run() {
     const monthKey = `${YEAR}-${parseInt(MONTH, 10)}`;
     const sitemapUrl = `https://www.bloomberg.com/sitemaps/news/${monthKey}.xml`;
 
-    console.log(`\n🚀 [Runner Cloud] Année ${YEAR} | Mois ${MONTH} | Partie ${PART} ${TEST_MODE ? '⚡ (MODE TEST RAPIDE ACTIF)' : ''}`);
+    console.log(`\n🚀 [Runner Cloud] Année ${YEAR} | Mois ${MONTH} | Partie ${PART} ${TEST_MODE ? '⚡ (MODE TEST RAPIDE)' : ''}`);
 
     const browser = await firefox.launch({ headless: true });
     const context = await browser.newContext({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0'
     });
+
     const page = await context.newPage();
 
+    // Bloquer les traceurs
     await page.route('**/*', route => {
         const u = route.request().url();
         if (u.includes('perimeterx') || u.includes('px-cloud') || u.includes('px.js') || u.includes('advertising') || u.includes('analytics')) return route.abort();
@@ -57,11 +58,23 @@ async function run() {
     });
 
     try {
-        console.log(`📥 Téléchargement du sitemap : ${sitemapUrl}...`);
-        await page.goto(sitemapUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-        const xml = await page.content();
-        const urls = (xml.match(/<loc>(https?:\/\/[^\s<>]+)<\/loc>/gi) || []).map(u => u.replace(/<\/?loc>/g, '').trim());
+        console.log(`📥 Téléchargement direct du sitemap : ${sitemapUrl}...`);
+        
+        // Téléchargement réseau direct du XML (compatible Linux & Windows)
+        const sitemapRes = await context.request.get(sitemapUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            }
+        });
+        
+        const xmlContent = await sitemapRes.text();
+        console.log(`📄 Taille du sitemap reçu : ${Math.round(xmlContent.length / 1024)} KB`);
+
+        const urls = (xmlContent.match(/<loc>(https?:\/\/[^\s<>]+)<\/loc>/gi) || []).map(u => u.replace(/<\/?loc>/g, '').trim());
         const allArticles = urls.filter(u => u.includes('/news/articles/') || u.includes('/news/features/'));
+
+        console.log(`🔍 Total d'articles extraits du sitemap : ${allArticles.length}`);
 
         let filteredUrls = allArticles.filter(url => {
             const dateMatch = url.match(/\/(\d{4})-(\d{2})-(\d{2})\//);
@@ -70,12 +83,11 @@ async function run() {
             return PART === '1' ? (dayNum <= 15) : (dayNum > 15);
         });
 
-        // SI MODE TEST : ON NE PREND QUE LES 10 PREMIERS ARTICLES !
         if (TEST_MODE) {
             filteredUrls = filteredUrls.slice(0, 10);
-            console.log(`⚡ MODE TEST : Traitement limité à 10 articles pour aller vite.`);
+            console.log(`⚡ MODE TEST ACTIF : Échantillon de ${filteredUrls.length} articles.`);
         } else {
-            console.log(`🎯 ${filteredUrls.length} dépêches assignées à cette machine.\n`);
+            console.log(`🎯 ${filteredUrls.length} dépêches assignées à ce runner.`);
         }
 
         let saved = 0;
@@ -83,6 +95,8 @@ async function run() {
             const url = filteredUrls[i];
             const slug = url.split('/').pop();
             const filePath = path.join(OUTPUT_DIR, `${slugify(slug)}.json`);
+
+            console.log(`   📥 [${i + 1}/${filteredUrls.length}] Aspiration : ${slug.slice(0, 35)}...`);
 
             try {
                 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -102,19 +116,27 @@ async function run() {
                                 fullText: parsed.text, tickers: parsed.tickers
                             }, null, 2));
                             saved++;
-                            console.log(`   ✅ [${i + 1}/${filteredUrls.length}] Enregistré (${Math.round(parsed.text.length / 1024)} KB) : ${slug.slice(0, 35)}...`);
+                            console.log(`      ✅ Enregistré (${Math.round(parsed.text.length / 1024)} KB)`);
+                        } else {
+                            console.log(`      ⚠️ Format trop court`);
                         }
+                    } else {
+                        console.log(`      ⚠️ Pas d'objet story`);
                     }
+                } else {
+                    console.log(`      ⚠️ NEXT_DATA non trouvé`);
                 }
             } catch (e) {
-                console.log(`   ❌ [${i + 1}/${filteredUrls.length}] Erreur : ${e.message.slice(0, 35)}`);
+                console.log(`      ❌ Erreur : ${e.message.slice(0, 35)}`);
             }
 
-            await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1500 + 1500)));
+            // Pause 2 secondes
+            await new Promise(r => setTimeout(r, 2000));
         }
+
         console.log(`\n🎉 [Terminé] Total de ${saved} articles sauvegardés.`);
     } catch (e) {
-        console.error("Erreur générale :", e.message);
+        console.error("❌ Erreur générale :", e.message);
     }
 
     await browser.close();
