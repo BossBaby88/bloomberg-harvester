@@ -4,7 +4,9 @@ const path = require('path');
 
 const YEAR = process.argv[2] || '2014';
 const MONTH = process.argv[3] || '2';
-const PART = process.argv[4] || '1'; // 1 = jours 1-15, 2 = jours 16-fin
+const PART = process.argv[4] || '1';
+// Si on passe "TEST", on ne prend que 10 articles pour tester en 1 minute !
+const TEST_MODE = process.argv[5] === 'TEST';
 
 const OUTPUT_DIR = path.resolve(__dirname, `./output_${YEAR}_${MONTH}_part${PART}`);
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -40,7 +42,7 @@ async function run() {
     const monthKey = `${YEAR}-${parseInt(MONTH, 10)}`;
     const sitemapUrl = `https://www.bloomberg.com/sitemaps/news/${monthKey}.xml`;
 
-    console.log(`\n🚀 [Runner Cloud] Démarrage : Année ${YEAR} | Mois ${MONTH} | Partie ${PART}`);
+    console.log(`\n🚀 [Runner Cloud] Année ${YEAR} | Mois ${MONTH} | Partie ${PART} ${TEST_MODE ? '⚡ (MODE TEST RAPIDE ACTIF)' : ''}`);
 
     const browser = await firefox.launch({ headless: true });
     const context = await browser.newContext({
@@ -48,7 +50,6 @@ async function run() {
     });
     const page = await context.newPage();
 
-    // Bloquer les traceurs
     await page.route('**/*', route => {
         const u = route.request().url();
         if (u.includes('perimeterx') || u.includes('px-cloud') || u.includes('px.js') || u.includes('advertising') || u.includes('analytics')) return route.abort();
@@ -62,26 +63,26 @@ async function run() {
         const urls = (xml.match(/<loc>(https?:\/\/[^\s<>]+)<\/loc>/gi) || []).map(u => u.replace(/<\/?loc>/g, '').trim());
         const allArticles = urls.filter(u => u.includes('/news/articles/') || u.includes('/news/features/'));
 
-        // Filtrage des jours
-        const filteredUrls = allArticles.filter(url => {
+        let filteredUrls = allArticles.filter(url => {
             const dateMatch = url.match(/\/(\d{4})-(\d{2})-(\d{2})\//);
             if (!dateMatch) return PART === '1';
             const dayNum = parseInt(dateMatch[3], 10);
             return PART === '1' ? (dayNum <= 15) : (dayNum > 15);
         });
 
-        console.log(`🎯 ${filteredUrls.length} dépêches assignées à ce runner.\n`);
+        // SI MODE TEST : ON NE PREND QUE LES 10 PREMIERS ARTICLES !
+        if (TEST_MODE) {
+            filteredUrls = filteredUrls.slice(0, 10);
+            console.log(`⚡ MODE TEST : Traitement limité à 10 articles pour aller vite.`);
+        } else {
+            console.log(`🎯 ${filteredUrls.length} dépêches assignées à cette machine.\n`);
+        }
 
         let saved = 0;
         for (let i = 0; i < filteredUrls.length; i++) {
             const url = filteredUrls[i];
             const slug = url.split('/').pop();
             const filePath = path.join(OUTPUT_DIR, `${slugify(slug)}.json`);
-
-            if (fs.existsSync(filePath)) {
-                console.log(`   ⏭️  [${i + 1}/${filteredUrls.length}] Déjà fait : ${slug.slice(0, 35)}...`);
-                continue;
-            }
 
             try {
                 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -101,20 +102,17 @@ async function run() {
                                 fullText: parsed.text, tickers: parsed.tickers
                             }, null, 2));
                             saved++;
-                            console.log(`   ✅ [${i + 1}/${filteredUrls.length}] Sauvegardé (${Math.round(parsed.text.length / 1024)} KB) : ${slug.slice(0, 40)}...`);
-                        } else {
-                            console.log(`   ⚠️  [${i + 1}/${filteredUrls.length}] Format court : ${slug.slice(0, 40)}...`);
+                            console.log(`   ✅ [${i + 1}/${filteredUrls.length}] Enregistré (${Math.round(parsed.text.length / 1024)} KB) : ${slug.slice(0, 35)}...`);
                         }
                     }
                 }
             } catch (e) {
-                console.log(`   ❌ [${i + 1}/${filteredUrls.length}] Erreur : ${e.message.slice(0, 40)}`);
+                console.log(`   ❌ [${i + 1}/${filteredUrls.length}] Erreur : ${e.message.slice(0, 35)}`);
             }
 
-            // Pause aléatoire de sécurité (2 à 4 secondes)
-            await new Promise(r => setTimeout(r, Math.floor(Math.random() * 2000 + 2000)));
+            await new Promise(r => setTimeout(r, Math.floor(Math.random() * 1500 + 1500)));
         }
-        console.log(`\n🎉 [Runner Terminé] Total de ${saved} articles sauvegardés pour ce lot.`);
+        console.log(`\n🎉 [Terminé] Total de ${saved} articles sauvegardés.`);
     } catch (e) {
         console.error("Erreur générale :", e.message);
     }
